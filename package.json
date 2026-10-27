@@ -1,0 +1,15 @@
+{
+  "name": "cisco-ar-rf",
+  "version": "1.0.0",
+  "description": "WebXR + Three.js Wi-Fi coverage and antenna pattern visualizer",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "serve . -l 8080",
+    "dev": "serve . -l 8080"
+  },
+  "devDependencies": {
+    "serve": "^14.2.4"
+  },
+  "license": "MIT"
+}

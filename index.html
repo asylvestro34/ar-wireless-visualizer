@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>Cisco AR-RF | Wi-Fi Coverage Visualizer</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- Entire HUD lives inside #overlay so it is used as the WebXR DOM Overlay root -->
+  <div id="overlay">
+    <header class="glass top-bar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="brand-text">Cisco <b>AR-RF</b></span>
+      </div>
+      <div class="status" id="status" role="status">Loading…</div>
+    </header>
+
+    <div class="toast glass" id="toast" role="alert" hidden></div>
+
+    <section class="glass panel" id="panel" aria-label="Access point controls">
+      <button class="panel-handle" id="panel-toggle" type="button" aria-expanded="true" aria-label="Collapse controls"></button>
+
+      <div class="panel-body" id="panel-body">
+        <div class="group">
+          <div class="group-label">Antenna</div>
+          <div class="segmented" id="antenna-select" role="radiogroup">
+            <button type="button" class="seg active" data-antenna="omni" role="radio" aria-checked="true">
+              <span class="seg-title">Omni</span><span class="seg-sub">CW9166 / MR46</span>
+            </button>
+            <button type="button" class="seg" data-antenna="patch" role="radio" aria-checked="false">
+              <span class="seg-title">Patch 60°</span><span class="seg-sub">C-ANT-P1-D</span>
+            </button>
+            <button type="button" class="seg" data-antenna="sector" role="radio" aria-checked="false">
+              <span class="seg-title">Sector 30°</span><span class="seg-sub">High ceiling</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="group">
+          <label class="slider-row" for="downtilt">
+            <span class="slider-name">Downtilt</span>
+            <output id="downtilt-out">0°</output>
+          </label>
+          <input type="range" id="downtilt" min="0" max="90" step="1" value="0">
+        </div>
+
+        <div class="group">
+          <label class="slider-row" for="height">
+            <span class="slider-name">Mounting Height</span>
+            <output id="height-out">10 ft (3.0 m)</output>
+          </label>
+          <input type="range" id="height" min="8" max="30" step="0.5" value="10">
+        </div>
+
+        <div class="group">
+          <label class="slider-row" for="txpower">
+            <span class="slider-name">TX Power</span>
+            <output id="txpower-out">20 dBm</output>
+          </label>
+          <input type="range" id="txpower" min="10" max="30" step="1" value="20">
+        </div>
+
+        <div class="readout" id="readout" aria-live="polite">
+          <div><span>EIRP</span><b id="ro-eirp">–</b></div>
+          <div><span>≥ −67 dBm</span><b id="ro-data">–</b></div>
+          <div><span>Cell edge −75</span><b id="ro-edge">–</b></div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn" id="scale-btn">Size: Compact (12 m)</button>
+          <button type="button" class="btn" id="reset-btn">Re-place AP</button>
+        </div>
+      </div>
+
+      <div class="legend" aria-label="dBm legend">
+        <div class="legend-bar" id="legend-bar"></div>
+        <div class="legend-labels" id="legend-labels"></div>
+      </div>
+    </section>
+
+    <div class="ar-button-slot" id="ar-button-slot"></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
