@@ -31,7 +31,10 @@ WebXR needs a secure context. On an Android phone use USB debugging with `adb re
 ## Using the app
 1. Open in **Chrome on an ARCore-capable Android device** and tap **START AR**.
 2. Move the phone slowly until the cyan reticle appears on surfaces.
-3. Tap a **ceiling or wall** to mount the AP at that point (the mounting-height slider then defines the floor reference), or tap the **floor** to place the AP above it at the selected height. Walls orient the antenna away from the wall.
+3. Tap a **ceiling or wall** to mount the AP at that point, or tap the **floor** to place it above the floor at the selected height.
+   - **Wall:** the AP sits flat on the wall with its beam pointing out into the room, and the RF pattern is cut off at the wall plane. Use **Downtilt** to angle it down. Set the **Mounting Height** slider to the real height of the spot you tapped, then adjust it to move the AP up or down.
+   - **Ceiling:** the pattern is cut at the ceiling plane; direction follows where the phone is facing.
+   - Desktop preview of a wall mount: open `http://localhost:8080/?mount=wall`.
 4. Pick an antenna and tune downtilt, height and TX power. Downtilt 0° is horizontal boresight, 90° points straight down.
 
 ## Notes and limitations

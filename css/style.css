@@ -128,9 +128,24 @@ html, body {
 }
 
 .panel.collapsed .panel-body { display: none; }
+.panel-body { max-height: 52vh; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
 
 .group { margin-bottom: 10px; }
 .group-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+
+.select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.select option, .select optgroup { background: #0f1a2e; color: var(--text); }
+.model-info { margin-top: 4px; font-size: 11px; color: var(--muted); }
 
 .segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 

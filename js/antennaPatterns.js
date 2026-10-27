@@ -71,16 +71,16 @@ function createLobeGeometry(beamwidthDeg, maxAttenuationDb) {
 const cache = new Map();
 
 // Returns a shared, normalised geometry for the antenna type ('omni' | 'patch' | 'sector').
-export function getAntennaGeometry(type) {
+// beamwidthDeg optionally overrides the type default (used by specific AP models).
+export function getAntennaGeometry(type, beamwidthDeg) {
   const spec = ANTENNA_TYPES[type];
   if (!spec) throw new Error(`Unknown antenna type: ${type}`);
-  if (!cache.has(type)) {
-    cache.set(
-      type,
-      type === 'omni' ? createOmniGeometry() : createLobeGeometry(spec.beamwidthDeg, spec.maxAttenuationDb)
-    );
+  const bw = type === 'omni' ? 360 : Math.round(beamwidthDeg ?? spec.beamwidthDeg);
+  const key = `${type}:${bw}`;
+  if (!cache.has(key)) {
+    cache.set(key, type === 'omni' ? createOmniGeometry() : createLobeGeometry(bw, spec.maxAttenuationDb));
   }
-  return cache.get(type);
+  return cache.get(key);
 }
 
 // Small physical AP body drawn at the origin of the lobe.

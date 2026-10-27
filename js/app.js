@@ -11,6 +11,7 @@ import {
   LEGEND_LABELS,
 } from './rfEngine.js';
 import { ANTENNA_TYPES, getAntennaGeometry, createApBody } from './antennaPatterns.js';
+import { AP_CATALOG, getApModel } from './apCatalog.js';
 import { createRfMaterial } from './shaderMaterial.js';
 import { ARController } from './arController.js';
 
@@ -18,6 +19,7 @@ const $ = (id) => document.getElementById(id);
 
 // With n = 2.8 the -75 dBm contour is >100 m at typical power, so the default view compresses it.
 const COMPACT_MAX_RADIUS_M = 12;
+const WALL_OFFSET_M = 0.0175; // half the AP disc thickness, so it sits flush on the wall
 
 /** A virtual AP: mounting node + tiltable group of concentric RF shells. */
 class AccessPoint {
@@ -25,10 +27,13 @@ class AccessPoint {
     this.root = new THREE.Group();
     this.tilt = new THREE.Group();
     this.root.add(this.tilt);
-    this.root.add(createApBody());
+    this.body = createApBody();
+    this.root.add(this.body);
+    this.mount = 'ceiling';
     this.root.visible = false;
 
     this.antenna = 'omni';
+    this.gainDbi = ANTENNA_TYPES.omni.gainDbi;
     this.compact = true;
     this.displayFactor = 1;
     this.txPower = 20;
@@ -49,7 +54,7 @@ class AccessPoint {
   }
 
   get eirp() {
-    return eirpDbm(this.txPower, ANTENNA_TYPES[this.antenna].gainDbi);
+    return eirpDbm(this.txPower, this.gainDbi);
   }
 
   // Resize every shell to the distance at which its RSSI threshold is reached.
@@ -72,9 +77,11 @@ class AccessPoint {
     this.refresh();
   }
 
-  setAntenna(type) {
+  // Pattern type with generic defaults; a specific AP model overrides gain and beamwidth.
+  setAntenna(type, gainDbi = ANTENNA_TYPES[type].gainDbi, beamwidthDeg = ANTENNA_TYPES[type].beamwidthDeg) {
     this.antenna = type;
-    const geometry = getAntennaGeometry(type);
+    this.gainDbi = gainDbi;
+    const geometry = getAntennaGeometry(type, beamwidthDeg);
     for (const { mesh } of this.shells) mesh.geometry = geometry;
     this.refresh();
   }
@@ -93,11 +100,26 @@ class AccessPoint {
     this.root.position.y = this.floorY + m;
   }
 
-  // Anchor at a world position; yaw rotates boresight (-Z) towards the given horizontal direction.
-  placeAt(position, facing, anchoredToFloor) {
-    this.floorY = anchoredToFloor ? position.y : position.y - this.heightM;
-    this.root.position.set(position.x, anchoredToFloor ? this.floorY + this.heightM : position.y, position.z);
+  // Anchor on a surface. Wall: boresight (-Z) faces out of the wall. Ceiling: yaw follows `facing`.
+  // Wall and ceiling clip the pattern at the surface so the RF doesn't render inside the building.
+  placeAt(position, facing, surface) {
+    const onFloor = surface === 'floor';
+    const onWall = surface === 'wall';
+    this.floorY = onFloor ? position.y : position.y - this.heightM;
+    this.root.position.set(position.x, onFloor ? this.floorY + this.heightM : position.y, position.z);
+    if (onWall) this.root.position.addScaledVector(facing, WALL_OFFSET_M);
     this.root.rotation.y = Math.atan2(-facing.x, -facing.z);
+
+    // AP body is a disc: flat against the wall when wall-mounted, otherwise horizontal.
+    this.body.rotation.x = onWall ? Math.PI / 2 : 0;
+
+    const clip = onWall ? facing.clone() : surface === 'ceiling' ? new THREE.Vector3(0, -1, 0) : null;
+    for (const { material } of this.shells) {
+      const u = material.uniforms.uClip.value;
+      if (clip) u.set(clip.x, clip.y, clip.z, -clip.dot(position) - 0.005);
+      else u.set(0, 0, 0, 0);
+    }
+    this.mount = surface;
     this.root.visible = true;
   }
 
@@ -190,14 +212,46 @@ function init() {
   });
 
   const antennaButtons = [...document.querySelectorAll('[data-antenna]')];
+  const modelSelect = $('ap-model');
+
+  const highlightPattern = (type) => {
+    for (const b of antennaButtons) {
+      const active = b.dataset.antenna === type;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-checked', String(active));
+    }
+  };
+
+  for (const group of AP_CATALOG) {
+    const og = document.createElement('optgroup');
+    og.label = group.group;
+    for (const m of group.models) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      og.appendChild(opt);
+    }
+    modelSelect.appendChild(og);
+  }
+
+  modelSelect.addEventListener('change', () => {
+    const model = getApModel(modelSelect.value);
+    if (!model) return; // "Generic" keeps the current pattern
+    ap.setAntenna(model.pattern, model.gainDbi, model.beamwidthDeg);
+    ap.setTxPower(model.txDbm);
+    ui.txpower.value = model.txDbm;
+    highlightPattern(model.pattern);
+    $('model-info').textContent =
+      `${model.gainDbi} dBi · ${model.pattern === 'omni' ? 'omnidirectional' : `${model.beamwidthDeg}° beamwidth`} · ${model.txDbm} dBm TX (approx. 5 GHz)`;
+    syncLabels();
+  });
+
   for (const btn of antennaButtons) {
     btn.addEventListener('click', () => {
       ap.setAntenna(btn.dataset.antenna);
-      for (const b of antennaButtons) {
-        const active = b === btn;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-checked', String(active));
-      }
+      modelSelect.value = '';
+      $('model-info').textContent = 'Generic pattern';
+      highlightPattern(btn.dataset.antenna);
       syncLabels();
     });
   }
@@ -216,8 +270,22 @@ function init() {
   }
 
   // ---- Placement ----
+  // Desktop preview of a wall mount: open with ?mount=wall (a wall slab is drawn at z = 0).
+  const previewWall = new URLSearchParams(location.search).get('mount') === 'wall';
+  const wallSlab = new THREE.Mesh(
+    new THREE.PlaneGeometry(20, 8).translate(0, 4, 0),
+    new THREE.MeshBasicMaterial({ color: 0x1d3550, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  );
+  wallSlab.position.z = -0.01;
+  wallSlab.visible = previewWall;
+  scene.add(wallSlab);
+
   const placePreview = () => {
-    ap.placeAt(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1), true);
+    if (previewWall) {
+      ap.placeAt(new THREE.Vector3(0, ap.heightM, 0), new THREE.Vector3(0, 0, 1), 'wall');
+    } else {
+      ap.placeAt(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1), 'floor');
+    }
     controls.target.set(0, ap.heightM * 0.6, 0);
     controls.update();
   };
@@ -229,7 +297,7 @@ function init() {
     onPlace: ({ position, normal, surface }) => {
       const facing = new THREE.Vector3();
       if (surface === 'wall') {
-        facing.set(normal.x, 0, normal.z);
+        facing.set(normal.x, 0, normal.z); // horizontal, pointing out of the wall into the room
       } else {
         renderer.xr.getCamera().getWorldDirection(facing);
         facing.y = 0;
@@ -237,16 +305,19 @@ function init() {
       if (facing.lengthSq() < 1e-6) facing.set(0, 0, -1);
       facing.normalize();
 
-      ap.placeAt(position, facing, surface === 'floor');
+      ap.placeAt(position, facing, surface);
       setStatus(`AP placed on ${surface}`, 'ok');
       showToast(
-        surface === 'floor'
-          ? 'Floor set. AP is raised to the mounting height. Tap again to move.'
-          : 'AP anchored. Adjust height, tilt and power below.'
+        surface === 'wall'
+          ? 'AP mounted on wall. Set Downtilt to angle it down; the pattern is cut at the wall.'
+          : surface === 'floor'
+            ? 'Floor set. AP is raised to the mounting height. Tap again to move.'
+            : 'AP anchored to ceiling. Adjust height, tilt and power below.'
       );
     },
     onSessionStart: () => {
       previewGrid.visible = false;
+      wallSlab.visible = false;
       controls.enabled = false;
       ap.root.visible = false;
       setStatus('Scan, then tap a ceiling, wall or floor', 'warn');
@@ -254,6 +325,7 @@ function init() {
     },
     onSessionEnd: () => {
       previewGrid.visible = true;
+      wallSlab.visible = previewWall;
       controls.enabled = true;
       camera.position.set(9, 5, 11);
       placePreview();

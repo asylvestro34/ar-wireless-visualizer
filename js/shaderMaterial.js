@@ -10,12 +10,14 @@ const VERTEX_SHADER = /* glsl */ `
   varying float vRssi;
   varying vec3 vNormalView;
   varying vec3 vViewDir;
+  varying vec3 vWorldPos;
 
   void main() {
     // RSSI per vertex from its distance to the AP origin (log-distance path loss).
     float d = max(length(position) * uScale, 0.1);
     vRssi = uEirp - (uRefLoss + 10.0 * uExponent * log(d) / 2.302585093);
 
+    vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     vNormalView = normalize(normalMatrix * normal);
     vViewDir = normalize(-mvPosition.xyz);
@@ -33,12 +35,16 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform float uOpacity;
   uniform float uFresnelPower;
   uniform float uTime;
+  uniform vec4 uClip;          // world-space plane (normal.xyz, constant); xyz = 0 disables clipping
 
   varying float vRssi;
   varying vec3 vNormalView;
   varying vec3 vViewDir;
+  varying vec3 vWorldPos;
 
   void main() {
+    // Cut away everything behind the mounting surface (wall / ceiling).
+    if (dot(uClip.xyz, uClip.xyz) > 0.0 && dot(uClip.xyz, vWorldPos) + uClip.w < 0.0) discard;
     vec3 n = normalize(vNormalView);
     if (!gl_FrontFacing) n = -n;
     float fresnel = pow(1.0 - clamp(dot(n, normalize(vViewDir)), 0.0, 1.0), uFresnelPower);
@@ -78,6 +84,7 @@ export function createRfMaterial({ eirp = 24, scale = 1, opacity = 0.35 } = {}) 
       uOpacity: { value: opacity },
       uFresnelPower: { value: 2.5 },
       uTime: { value: 0 },
+      uClip: { value: new THREE.Vector4(0, 0, 0, 0) },
     },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
