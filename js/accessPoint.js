@@ -10,8 +10,10 @@ import {
 } from './antennaPatterns.js';
 import { createRfMaterial } from './shaderMaterial.js';
 
-// With n = 2.8 the -75 dBm contour is >100 m at typical power, so the default view compresses it.
-export const COMPACT_MAX_RADIUS_M = 12;
+// With n = 2.8 the -75 dBm contour is >100 m at typical power, so compact mode draws everything at a
+// fixed 1:15 scale. The scale does not depend on TX power, so the rings grow and shrink with it.
+export const COMPACT_SCALE = 1 / 15;
+export const COMPACT_LABEL = 'Compact (1:15)';
 const WALL_OFFSET_M = 0.02; // half the AP disc thickness, so it sits flush on the wall
 const CLIP_EPSILON_M = 0.005;
 
@@ -62,13 +64,11 @@ export class AccessPoint {
     return this.root.visible;
   }
 
-  // Resize every shell to the distance at which its RSSI threshold is reached.
-  // In compact mode all shells shrink by one common factor so the outer shell fits a room;
-  // colours still use the true distance (uScale), only the drawn size is compressed.
+  // Resize every shell to the distance at which its RSSI threshold is reached (times the display scale).
+  // Colours always use the true distance (uScale); only the drawn size is compressed.
   refresh() {
     const eirp = this.eirp;
-    const outer = distanceForRssi(eirp, SHELL_THRESHOLDS_DBM[SHELL_THRESHOLDS_DBM.length - 1]);
-    const factor = this.compact ? Math.min(1, COMPACT_MAX_RADIUS_M / outer) : 1;
+    const factor = this.compact ? COMPACT_SCALE : 1;
     for (const { threshold, mesh, material } of this.shells) {
       const radius = distanceForRssi(eirp, threshold);
       mesh.scale.setScalar(radius * factor);

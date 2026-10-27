@@ -9,7 +9,7 @@ import {
   LEGEND_LABELS,
 } from './rfEngine.js';
 import { AP_CATALOG, getApModel } from './apCatalog.js';
-import { AccessPoint, COMPACT_MAX_RADIUS_M } from './accessPoint.js';
+import { AccessPoint, COMPACT_LABEL } from './accessPoint.js';
 import { ARController } from './arController.js';
 import { SCENARIOS, ScenarioManager } from './scenarios.js';
 
@@ -138,7 +138,7 @@ function init() {
   ui.height.addEventListener('input', () => {
     const m = readHeightM();
     ap.setHeightM(m);
-    scenarios.setHeight(m);
+    if (scenarios.heightDrivesRoom && ap.mount === 'ceiling') scenarios.setHeight(m);
     syncLabels();
   });
   ui.txpower.addEventListener('input', () => {
@@ -194,13 +194,71 @@ function init() {
     if (model) applyModel(model);
 
     const heightM = readHeightM();
-    scenarios.setHeight(heightM);
+    if (scenarios.heightDrivesRoom && cfg.mount === 'ceiling') scenarios.setHeight(heightM);
     ap.placeAt(new THREE.Vector3(cfg.x, heightM, cfg.z), new THREE.Vector3(...cfg.facing), cfg.mount, 0);
     setCamera(spec.camera);
     syncLabels();
   };
 
   ui.scenarioSelect.addEventListener('change', () => loadScenario(ui.scenarioSelect.value));
+
+  // ---- Click / tap to place the AP on any surface in the preview ----
+  const raycaster = new THREE.Raycaster();
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const MIN_H_FT = parseFloat(ui.height.min);
+  const MAX_H_FT = parseFloat(ui.height.max);
+  let pointerStart = null;
+
+  const placeFromPointer = (clientX, clientY) => {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+
+    let point = null;
+    const normal = new THREE.Vector3(0, 1, 0);
+    const hit = scenarios.group ? raycaster.intersectObjects(scenarios.pickables(), false)[0] : null;
+    if (hit) {
+      point = hit.point.clone();
+      normal.copy(hit.face.normal).applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+      if (normal.dot(raycaster.ray.direction) > 0) normal.negate(); // face the viewer
+    } else {
+      point = raycaster.ray.intersectPlane(groundPlane, new THREE.Vector3());
+    }
+    if (!point) return;
+
+    const surface = normal.y > 0.7 ? 'floor' : normal.y < -0.7 ? 'ceiling' : 'wall';
+    const facing = new THREE.Vector3();
+    if (surface === 'wall') facing.set(normal.x, 0, normal.z);
+    else facing.copy(ap.facing).setY(0);
+    if (facing.lengthSq() < 1e-6) facing.set(0, 0, -1);
+    facing.normalize();
+
+    if (surface === 'floor') {
+      ap.placeAt(point, facing, 'floor', point.y);
+    } else {
+      // Wall / ceiling: the AP goes exactly where you clicked, so the height follows the click.
+      const h = Math.max(point.y, 0.3);
+      ap.heightM = h;
+      ui.height.value = THREE.MathUtils.clamp(h / FT_TO_M, MIN_H_FT, MAX_H_FT).toFixed(1);
+      ap.placeAt(point, facing, surface, 0);
+      if (surface === 'ceiling' && scenarios.heightDrivesRoom) scenarios.setHeight(h);
+    }
+    syncLabels();
+    setStatus(`AP placed on ${surface === 'floor' ? 'pole (floor)' : surface}`, 'ok');
+  };
+
+  const canvas = renderer.domElement;
+  canvas.addEventListener('pointerdown', (e) => {
+    pointerStart = e.isPrimary ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (!pointerStart || ar.isPresenting) return;
+    const moved = Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y);
+    const quick = performance.now() - pointerStart.t < 400;
+    pointerStart = null;
+    if (moved < 6 && quick) placeFromPointer(e.clientX, e.clientY);
+  });
+  canvas.addEventListener('pointercancel', () => { pointerStart = null; });
 
   // ---- AR ----
   const arStatus = { lastText: '', lastDiag: 0 };
@@ -273,7 +331,7 @@ function init() {
 
   $('scale-btn').addEventListener('click', () => {
     ap.setCompact(!ap.compact);
-    $('scale-btn').textContent = ap.compact ? `Size: Compact (${COMPACT_MAX_RADIUS_M} m)` : 'Size: True scale';
+    $('scale-btn').textContent = ap.compact ? `Size: ${COMPACT_LABEL}` : 'Size: True scale';
     showToast(ap.compact ? 'Bubble compressed to fit a room. Readouts show true ranges.' : 'Bubble drawn at true model range.');
   });
 

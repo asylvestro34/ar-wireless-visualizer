@@ -44,7 +44,7 @@ Pick a scenario from the dropdown: **School hallway**, **Classroom**, **Outside 
 
 ## Notes and limitations
 - iOS Safari does not support WebXR `immersive-ar`; the app falls back to an interactive 3D preview (drag to orbit). Desktop browsers also use the preview.
-- Shell surfaces are constant-RSSI contours that include antenna gain; colour is computed per vertex from distance to the AP. With n = 2.8 the −75 dBm range is >100 m, so **Size: Compact** (default) shrinks the drawn bubble to ≤12 m; colours and the range readouts stay true. Switch to *True scale* for the unscaled model. Results are a planning aid, not a substitute for a site survey: walls, materials and interference are not modelled.
+- Shell surfaces are constant-RSSI contours that include antenna gain; colour is computed per vertex from distance to the AP. With n = 2.8 the −75 dBm range is >100 m, so **Size: Compact** (default) draws the bubble at 1:15 scale, so ring sizes still grow and shrink with TX power; colours and the range readouts stay true. In the preview scenarios, tap/click any floor, wall or ceiling to move the AP there. Switch to *True scale* for the unscaled model. Results are a planning aid, not a substitute for a site survey: walls, materials and interference are not modelled.
 - Surface detection of ceilings depends on the device's ARCore support.
 
 ## Structure

@@ -152,6 +152,7 @@ function buildHallway() {
   return {
     group: g,
     background: 0x10161f,
+    heightDrives: 'room',
     update(h) {
       tall.forEach((m) => { m.scale.y = h; });
       ceiling.position.y = h;
@@ -218,6 +219,7 @@ function buildClassroom() {
   return {
     group: g,
     background: 0x10161f,
+    heightDrives: 'room',
     update(h) {
       tall.forEach((m) => { m.scale.y = h; });
       ceiling.position.y = h;
@@ -329,13 +331,14 @@ function buildBleachers() {
   // Light pole carrying the AP: its height follows the mounting-height slider
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1, 12).translate(0, 0.5, 0), lambert(0x6b7682));
   pole.position.set(7.2, 0, 0);
+  pole.scale.y = 6.1;
   g.add(pole);
 
   return {
     group: g,
     background: 0x87ceeb,
     fog: [0x87ceeb, 60, 160],
-    update(h) { pole.scale.y = h; },
+    update() {},
   };
 }
 
@@ -406,6 +409,23 @@ export class ScenarioManager {
 
   setHeight(heightM) {
     this.built?.update(heightM);
+  }
+
+  // True when the mounting-height slider also resizes the room (hallway / classroom ceiling).
+  get heightDrivesRoom() {
+    return this.built?.heightDrives === 'room';
+  }
+
+  // Meshes a placement click can land on (skips tree crowns, people and other round props).
+  pickables() {
+    const out = [];
+    this.group?.traverse((o) => {
+      if (!o.isMesh) return;
+      const t = o.geometry.type;
+      if (t.startsWith('Sphere') || t.startsWith('Icosahedron') || t.startsWith('Cone') || t.startsWith('Cylinder')) return;
+      out.push(o);
+    });
+    return out;
   }
 
   // Scenario visuals are for the desktop preview only; hidden in AR so the camera feed shows through.
