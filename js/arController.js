@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 
+const SURFACE_COLORS = { floor: 0x00f2fe, wall: 0x00e676, ceiling: 0xffeb3b };
+
+// Classify a hit pose: pose +Y is the surface normal (pointing towards the viewer).
+export function classifyNormal(normal) {
+  if (normal.y > 0.7) return 'floor';
+  if (normal.y < -0.7) return 'ceiling';
+  return 'wall';
+}
+
 // WebXR session manager: AR button, viewer reticle, touch hit-testing against real surfaces.
 export class ARController {
   /**
@@ -26,13 +35,19 @@ export class ARController {
     this.viewerSource = null;
     this.touchSource = null;
     this.lastTouchHit = null;
-    this.reticleHasHit = false;
+    this.reticleSurface = null; // 'floor' | 'wall' | 'ceiling' | null
+    this.stats = { frames: 0, viewerHits: 0, touchHits: 0, error: '' };
     this._matrix = new THREE.Matrix4();
 
-    this.reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.07, 0.09, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x00f2fe, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
-    );
+    this.reticle = new THREE.Group();
+    this.reticleMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00f2fe, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthTest: false,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.09, 0.12, 48).rotateX(-Math.PI / 2), this.reticleMaterial);
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.015, 16).rotateX(-Math.PI / 2), this.reticleMaterial);
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.12, 16).translate(0, 0.06, 0), this.reticleMaterial);
+    ring.renderOrder = dot.renderOrder = arrow.renderOrder = 40;
+    this.reticle.add(ring, dot, arrow); // arrow shows the surface normal
     this.reticle.matrixAutoUpdate = false;
     this.reticle.visible = false;
     scene.add(this.reticle);
@@ -56,7 +71,12 @@ export class ARController {
   createButton() {
     return ARButton.createButton(this.renderer, {
       requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
+      // Depth sensing makes hit-tests land on textureless walls and ceilings where plane detection fails.
+      optionalFeatures: ['dom-overlay', 'depth-sensing'],
+      depthSensing: {
+        usagePreference: ['cpu-optimized', 'gpu-optimized'],
+        dataFormatPreference: ['luminance-alpha', 'float32'],
+      },
       domOverlay: { root: this.overlayRoot },
     });
   }
@@ -65,24 +85,50 @@ export class ARController {
     return !!this.session;
   }
 
+  // One-line status for the on-screen diagnostics.
+  diagnostics() {
+    if (!this.session) return '';
+    const s = this.stats;
+    const src = `${this.viewerSource ? 'view✓' : 'view✗'} ${this.touchSource ? 'touch✓' : 'touch✗'}`;
+    return `${src} · hits ${s.viewerHits}/${s.frames}${s.error ? ` · ${s.error}` : ''}`;
+  }
+
+  async _requestHitSource(space) {
+    try {
+      // 'point' lets hit-tests land on tracked feature points (walls without detected planes).
+      return await this.session.requestHitTestSource({ space, entityTypes: ['plane', 'point'] });
+    } catch (err) {
+      return this.session.requestHitTestSource({ space });
+    }
+  }
+
   async _handleStart() {
     const session = this.renderer.xr.getSession();
     this.session = session;
+    this.stats = { frames: 0, viewerHits: 0, touchHits: 0, error: '' };
     session.addEventListener('selectstart', this._onSelectStart);
     session.addEventListener('select', this._onSelect);
     session.addEventListener('end', this._onEnd);
 
     try {
       const viewerSpace = await session.requestReferenceSpace('viewer');
-      this.viewerSource = await session.requestHitTestSource({ space: viewerSpace });
+      this.viewerSource = await this._requestHitSource(viewerSpace);
     } catch (err) {
+      this.stats.error = `viewer: ${err.message || err}`;
       console.warn('Viewer hit-test unavailable', err);
     }
 
     try {
-      this.touchSource = await session.requestHitTestSourceForTransientInput({ profile: 'generic-touchscreen' });
+      this.touchSource = await session.requestHitTestSourceForTransientInput({
+        profile: 'generic-touchscreen',
+        entityTypes: ['plane', 'point'],
+      });
     } catch (err) {
-      console.warn('Touch hit-test unavailable, falling back to reticle', err);
+      try {
+        this.touchSource = await session.requestHitTestSourceForTransientInput({ profile: 'generic-touchscreen' });
+      } catch (err2) {
+        console.warn('Touch hit-test unavailable, using the centre reticle', err2);
+      }
     }
 
     this.onSessionStart();
@@ -95,7 +141,7 @@ export class ARController {
     this.touchSource = null;
     this.lastTouchHit = null;
     this.reticle.visible = false;
-    this.reticleHasHit = false;
+    this.reticleSurface = null;
     this.session = null;
     this.onSessionEnd();
   }
@@ -104,47 +150,51 @@ export class ARController {
   update(frame) {
     if (!frame || !this.session) return;
     const refSpace = this.renderer.xr.getReferenceSpace();
+    this.stats.frames++;
 
     if (this.viewerSource) {
       const hits = frame.getHitTestResults(this.viewerSource);
       const pose = hits.length ? hits[0].getPose(refSpace) : null;
       if (pose) {
         this.reticle.matrix.fromArray(pose.transform.matrix);
+        this.reticle.matrixWorldNeedsUpdate = true;
         this.reticle.visible = true;
-        this.reticleHasHit = true;
+        const normal = new THREE.Vector3(0, 1, 0).transformDirection(this.reticle.matrix);
+        this.reticleSurface = classifyNormal(normal);
+        this.reticleMaterial.color.setHex(SURFACE_COLORS[this.reticleSurface]);
+        this.stats.viewerHits++;
       } else {
         this.reticle.visible = false;
-        this.reticleHasHit = false;
+        this.reticleSurface = null;
       }
     }
 
     if (this.touchSource) {
-      const touches = frame.getHitTestResultsForTransientInput(this.touchSource);
-      for (const touch of touches) {
+      for (const touch of frame.getHitTestResultsForTransientInput(this.touchSource)) {
         const pose = touch.results.length ? touch.results[0].getPose(refSpace) : null;
-        if (pose) this.lastTouchHit = pose.transform.matrix.slice();
+        if (pose) {
+          this.lastTouchHit = pose.transform.matrix.slice();
+          this.stats.touchHits++;
+        }
       }
     }
   }
 
-  // Tap: anchor at the surface under the finger (falls back to the reticle if touch hit-testing is unsupported).
+  // Tap: anchor at the surface under the finger, else at the surface under the centre reticle.
   _handleSelect() {
     let matrix = this.lastTouchHit;
-    if (!matrix && !this.touchSource && this.reticleHasHit) matrix = this.reticle.matrix.elements;
+    if (!matrix && this.reticle.visible) matrix = this.reticle.matrix.elements;
 
     if (!matrix) {
-      this.onMessage('No surface detected there. Move the phone slowly and tap a detected ceiling, wall or floor.');
+      this.onMessage('No surface found yet. Move the phone slowly to scan, or use "Place ahead of me".');
       return;
     }
 
     this._matrix.fromArray(matrix);
     const position = new THREE.Vector3().setFromMatrixPosition(this._matrix);
-    // Hit pose +Y is the surface normal.
     const normal = new THREE.Vector3(0, 1, 0).transformDirection(this._matrix);
-    const surface = normal.y > 0.7 ? 'floor' : normal.y < -0.7 ? 'ceiling' : 'wall';
-
     this.lastTouchHit = null;
-    this.onPlace({ position, normal, surface });
+    this.onPlace({ position, normal, surface: classifyNormal(normal) });
   }
 
   endSession() {

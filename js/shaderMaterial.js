@@ -36,6 +36,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform float uFresnelPower;
   uniform float uTime;
   uniform vec4 uClip;          // world-space plane (normal.xyz, constant); xyz = 0 disables clipping
+  uniform vec2 uFloor;         // x = enabled, y = world floor height
 
   varying float vRssi;
   varying vec3 vNormalView;
@@ -43,8 +44,9 @@ const FRAGMENT_SHADER = /* glsl */ `
   varying vec3 vWorldPos;
 
   void main() {
-    // Cut away everything behind the mounting surface (wall / ceiling).
+    // Cut away everything behind the mounting surface (wall / ceiling) and below the floor.
     if (dot(uClip.xyz, uClip.xyz) > 0.0 && dot(uClip.xyz, vWorldPos) + uClip.w < 0.0) discard;
+    if (uFloor.x > 0.5 && vWorldPos.y < uFloor.y) discard;
     vec3 n = normalize(vNormalView);
     if (!gl_FrontFacing) n = -n;
     float fresnel = pow(1.0 - clamp(dot(n, normalize(vViewDir)), 0.0, 1.0), uFresnelPower);
@@ -85,6 +87,7 @@ export function createRfMaterial({ eirp = 24, scale = 1, opacity = 0.35 } = {}) 
       uFresnelPower: { value: 2.5 },
       uTime: { value: 0 },
       uClip: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uFloor: { value: new THREE.Vector2(0, 0) },
     },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,

@@ -30,12 +30,17 @@ WebXR needs a secure context. On an Android phone use USB debugging with `adb re
 
 ## Using the app
 1. Open in **Chrome on an ARCore-capable Android device** and tap **START AR**.
-2. Move the phone slowly until the cyan reticle appears on surfaces.
-3. Tap a **ceiling or wall** to mount the AP at that point, or tap the **floor** to place it above the floor at the selected height.
+2. Move the phone slowly. A reticle appears on detected surfaces (cyan = floor, green = wall, yellow = ceiling) and the status bar names the surface. Surfaces with some texture are detected fastest.
+3. Tap to place the AP. A white AP disc with a pulsing cyan ring and a label (model, mount, height) marks the spot.
    - **Wall:** the AP sits flat on the wall with its beam pointing out into the room, and the RF pattern is cut off at the wall plane. Use **Downtilt** to angle it down. Set the **Mounting Height** slider to the real height of the spot you tapped, then adjust it to move the AP up or down.
    - **Ceiling:** the pattern is cut at the ceiling plane; direction follows where the phone is facing.
-   - Desktop preview of a wall mount: open `http://localhost:8080/?mount=wall`.
-4. Pick an antenna and tune downtilt, height and TX power. Downtilt 0° is horizontal boresight, 90° points straight down.
+   - **Floor:** the AP floats at the mounting height above the tapped spot.
+   - **Place ahead of me** puts the AP 2.5 m in front of you if no surface is detected.
+4. Pick an AP model and tune downtilt, height and TX power. Downtilt 0° is horizontal boresight, 90° points straight down.
+5. The small grey line under the status bar (`view✓ touch✓ · hits N/M`) shows whether hit-testing is running and how many frames found a surface. Include it when reporting AR problems.
+
+## Test scenarios (desktop / non-AR preview)
+Pick a scenario from the dropdown: **School hallway**, **Classroom**, **Outside against a wall** or **Football bleachers**. Each loads a 3D environment, a typical AP model, mount and height. Drag to orbit, pinch/scroll to zoom. Link straight to one with `?scenario=hallway|classroom|outdoor-wall|bleachers`.
 
 ## Notes and limitations
 - iOS Safari does not support WebXR `immersive-ar`; the app falls back to an interactive 3D preview (drag to orbit). Desktop browsers also use the preview.
@@ -47,8 +52,11 @@ WebXR needs a secure context. On an Android phone use USB debugging with `adb re
 index.html          HUD + canvas
 css/style.css       glassmorphic dark UI
 js/rfEngine.js      path loss, RSSI colour bands
-js/antennaPatterns.js  procedural geometry
+js/apCatalog.js     Cisco AP models (gain, beamwidth, TX)
+js/antennaPatterns.js  procedural geometry, AP marker and label
+js/accessPoint.js   AP object: mounting, clipping, RF shells
 js/shaderMaterial.js   GLSL volumetric material
-js/arController.js  WebXR session, hit-testing
+js/scenarios.js     procedural test environments
+js/arController.js  WebXR session, hit-testing, reticle
 js/app.js           scene, UI wiring, render loop
 ```

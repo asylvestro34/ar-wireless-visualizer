@@ -96,6 +96,21 @@ html, body {
 
 .toast[hidden] { display: none; }
 
+/* AR diagnostics line */
+.diag {
+  position: absolute;
+  top: calc(60px + var(--safe-top));
+  left: 12px;
+  font: 11px ui-monospace, Menlo, Consolas, monospace;
+  color: #8fa3b8;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none !important;
+}
+
+.ar-only { display: none; }
+body.in-ar .ar-only { display: block; }
+body.in-ar .not-ar { display: none; }
+
 /* Control panel */
 .panel {
   margin: 0 10px calc(10px + var(--safe-bottom));

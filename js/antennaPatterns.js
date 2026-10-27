@@ -83,18 +83,97 @@ export function getAntennaGeometry(type, beamwidthDeg) {
   return cache.get(key);
 }
 
-// Small physical AP body drawn at the origin of the lobe.
+// Visible AP marker at the lobe origin. Local -Y faces the room (the mounting surface is at +Y):
+// white disc, cyan LED ring, a glowing halo and a pulsing ring that expands across the surface.
 export function createApBody() {
   const group = new THREE.Group();
-  const shell = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.11, 0.11, 0.035, 40),
+  const disc = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14, 0.14, 0.04, 48),
     new THREE.MeshBasicMaterial({ color: 0xf2f6fa })
   );
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.075, 0.008, 8, 40).rotateX(Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x049fd9 })
+  const led = new THREE.Mesh(
+    new THREE.TorusGeometry(0.095, 0.012, 8, 48).rotateX(Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x00f2fe })
   );
-  ring.position.y = -0.02;
-  group.add(shell, ring);
+  led.position.y = -0.022;
+  const halo = new THREE.Mesh(
+    new THREE.RingGeometry(0.15, 0.2, 48).rotateX(Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x049fd9, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthTest: false })
+  );
+  halo.position.y = -0.021;
+  halo.renderOrder = 20;
+  const pulse = new THREE.Mesh(
+    new THREE.RingGeometry(0.19, 0.2, 64).rotateX(Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x00f2fe, transparent: true, side: THREE.DoubleSide, depthTest: false })
+  );
+  pulse.position.y = -0.021;
+  pulse.renderOrder = 20;
+  group.add(disc, led, halo, pulse);
+  group.userData.pulse = pulse;
   return group;
+}
+
+// Animate the pulse ring (call every frame).
+export function animateApBody(body, time) {
+  const pulse = body.userData.pulse;
+  if (!pulse) return;
+  const t = (time * 0.8) % 1;
+  pulse.scale.setScalar(1 + t * 3);
+  pulse.material.opacity = 0.8 * (1 - t);
+}
+
+// Camera-facing label sprite with a Wi-Fi icon. Call setLabel(sprite, title, subtitle) to redraw.
+export function createApLabel() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 160;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false })
+  );
+  sprite.scale.set(0.8, 0.25, 1);
+  sprite.renderOrder = 30;
+  sprite.userData.canvas = canvas;
+  sprite.userData.texture = texture;
+  return sprite;
+}
+
+export function setApLabel(sprite, title, subtitle) {
+  const canvas = sprite.userData.canvas;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = 'rgba(11, 18, 32, 0.82)';
+  ctx.strokeStyle = '#049fd9';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 28);
+  ctx.fill();
+  ctx.stroke();
+
+  // Wi-Fi icon: dot plus three arcs
+  ctx.strokeStyle = '#00f2fe';
+  ctx.fillStyle = '#00f2fe';
+  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  const cx = 78;
+  const cy = 108;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+  ctx.fill();
+  for (const r of [26, 46, 66]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, Math.PI * 1.25, Math.PI * 1.75);
+    ctx.stroke();
+  }
+
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#e8f1fa';
+  ctx.font = '600 44px -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+  ctx.fillText(title, 150, 76, 340);
+  ctx.fillStyle = '#8fa3b8';
+  ctx.font = '32px -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+  ctx.fillText(subtitle, 150, 124, 340);
+  sprite.userData.texture.needsUpdate = true;
 }

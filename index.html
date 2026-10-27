@@ -29,11 +29,19 @@
     </header>
 
     <div class="toast glass" id="toast" role="alert" hidden></div>
+    <div class="diag" id="diag" aria-hidden="true"></div>
 
     <section class="glass panel" id="panel" aria-label="Access point controls">
       <button class="panel-handle" id="panel-toggle" type="button" aria-expanded="true" aria-label="Collapse controls"></button>
 
       <div class="panel-body" id="panel-body">
+        <div class="group not-ar">
+          <label class="group-label" for="scenario">Test scenario</label>
+          <select id="scenario" class="select">
+            <option value="">Open space (grid)</option>
+          </select>
+          <div class="model-info" id="scenario-info">Open space with a reference grid.</div>
+        </div>
         <div class="group">
           <label class="group-label" for="ap-model">Access Point model</label>
           <select id="ap-model" class="select">
@@ -88,6 +96,7 @@
         </div>
 
         <div class="actions">
+          <button type="button" class="btn ar-only" id="place-ahead-btn">Place ahead of me</button>
           <button type="button" class="btn" id="scale-btn">Size: Compact (12 m)</button>
           <button type="button" class="btn" id="reset-btn">Re-place AP</button>
         </div>

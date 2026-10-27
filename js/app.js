@@ -3,130 +3,19 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   FT_TO_M,
   CELL_EDGE_DBM,
-  SHELL_THRESHOLDS_DBM,
   distanceForRssi,
-  eirpDbm,
   formatDistance,
   legendGradientCss,
   LEGEND_LABELS,
 } from './rfEngine.js';
-import { ANTENNA_TYPES, getAntennaGeometry, createApBody } from './antennaPatterns.js';
 import { AP_CATALOG, getApModel } from './apCatalog.js';
-import { createRfMaterial } from './shaderMaterial.js';
+import { AccessPoint, COMPACT_MAX_RADIUS_M } from './accessPoint.js';
 import { ARController } from './arController.js';
+import { SCENARIOS, ScenarioManager } from './scenarios.js';
 
 const $ = (id) => document.getElementById(id);
 
-// With n = 2.8 the -75 dBm contour is >100 m at typical power, so the default view compresses it.
-const COMPACT_MAX_RADIUS_M = 12;
-const WALL_OFFSET_M = 0.0175; // half the AP disc thickness, so it sits flush on the wall
-
-/** A virtual AP: mounting node + tiltable group of concentric RF shells. */
-class AccessPoint {
-  constructor() {
-    this.root = new THREE.Group();
-    this.tilt = new THREE.Group();
-    this.root.add(this.tilt);
-    this.body = createApBody();
-    this.root.add(this.body);
-    this.mount = 'ceiling';
-    this.root.visible = false;
-
-    this.antenna = 'omni';
-    this.gainDbi = ANTENNA_TYPES.omni.gainDbi;
-    this.compact = true;
-    this.displayFactor = 1;
-    this.txPower = 20;
-    this.floorY = 0;
-    this.heightM = 3.05;
-
-    this.shells = SHELL_THRESHOLDS_DBM.map((threshold, i) => {
-      const outer = i === SHELL_THRESHOLDS_DBM.length - 1;
-      const material = createRfMaterial({ opacity: outer ? 0.35 : 0.22 });
-      const mesh = new THREE.Mesh(getAntennaGeometry(this.antenna), material);
-      mesh.renderOrder = SHELL_THRESHOLDS_DBM.length - i; // outer shells draw first
-      mesh.frustumCulled = false;
-      this.tilt.add(mesh);
-      return { threshold, mesh, material };
-    });
-
-    this.refresh();
-  }
-
-  get eirp() {
-    return eirpDbm(this.txPower, this.gainDbi);
-  }
-
-  // Resize every shell to the distance at which its RSSI threshold is reached.
-  // In compact mode all shells shrink by one common factor so the outer shell fits a room;
-  // colours still use the true distance (uScale), only the drawn size is compressed.
-  refresh() {
-    const eirp = this.eirp;
-    const outer = distanceForRssi(eirp, SHELL_THRESHOLDS_DBM[SHELL_THRESHOLDS_DBM.length - 1]);
-    this.displayFactor = this.compact ? Math.min(1, COMPACT_MAX_RADIUS_M / outer) : 1;
-    for (const { threshold, mesh, material } of this.shells) {
-      const radius = distanceForRssi(eirp, threshold);
-      mesh.scale.setScalar(radius * this.displayFactor);
-      material.uniforms.uEirp.value = eirp;
-      material.uniforms.uScale.value = radius;
-    }
-  }
-
-  setCompact(compact) {
-    this.compact = compact;
-    this.refresh();
-  }
-
-  // Pattern type with generic defaults; a specific AP model overrides gain and beamwidth.
-  setAntenna(type, gainDbi = ANTENNA_TYPES[type].gainDbi, beamwidthDeg = ANTENNA_TYPES[type].beamwidthDeg) {
-    this.antenna = type;
-    this.gainDbi = gainDbi;
-    const geometry = getAntennaGeometry(type, beamwidthDeg);
-    for (const { mesh } of this.shells) mesh.geometry = geometry;
-    this.refresh();
-  }
-
-  setTxPower(dbm) {
-    this.txPower = dbm;
-    this.refresh();
-  }
-
-  setDowntiltDeg(deg) {
-    this.tilt.rotation.x = -THREE.MathUtils.degToRad(deg);
-  }
-
-  setHeightM(m) {
-    this.heightM = m;
-    this.root.position.y = this.floorY + m;
-  }
-
-  // Anchor on a surface. Wall: boresight (-Z) faces out of the wall. Ceiling: yaw follows `facing`.
-  // Wall and ceiling clip the pattern at the surface so the RF doesn't render inside the building.
-  placeAt(position, facing, surface) {
-    const onFloor = surface === 'floor';
-    const onWall = surface === 'wall';
-    this.floorY = onFloor ? position.y : position.y - this.heightM;
-    this.root.position.set(position.x, onFloor ? this.floorY + this.heightM : position.y, position.z);
-    if (onWall) this.root.position.addScaledVector(facing, WALL_OFFSET_M);
-    this.root.rotation.y = Math.atan2(-facing.x, -facing.z);
-
-    // AP body is a disc: flat against the wall when wall-mounted, otherwise horizontal.
-    this.body.rotation.x = onWall ? Math.PI / 2 : 0;
-
-    const clip = onWall ? facing.clone() : surface === 'ceiling' ? new THREE.Vector3(0, -1, 0) : null;
-    for (const { material } of this.shells) {
-      const u = material.uniforms.uClip.value;
-      if (clip) u.set(clip.x, clip.y, clip.z, -clip.dot(position) - 0.005);
-      else u.set(0, 0, 0, 0);
-    }
-    this.mount = surface;
-    this.root.visible = true;
-  }
-
-  update(time) {
-    for (const { material } of this.shells) material.uniforms.uTime.value = time;
-  }
-}
+const DEFAULT_CAMERA = { pos: [9, 5, 11], target: [0, 1.8, 0] };
 
 function init() {
   const container = $('canvas-container');
@@ -139,25 +28,27 @@ function init() {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 200);
-  camera.position.set(9, 5, 11);
-
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 300);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
   const previewGrid = new THREE.GridHelper(40, 40, 0x049fd9, 0x1d3550);
   scene.add(previewGrid);
 
+  const scenarios = new ScenarioManager(scene);
   const ap = new AccessPoint();
   scene.add(ap.root);
 
-  // ---- UI state ----
+  // ---- UI helpers ----
   const ui = {
     status: $('status'),
     toast: $('toast'),
+    diag: $('diag'),
     downtilt: $('downtilt'),
     height: $('height'),
     txpower: $('txpower'),
+    modelSelect: $('ap-model'),
+    scenarioSelect: $('scenario'),
   };
   let toastTimer = 0;
   const showToast = (msg, ms = 3500) => {
@@ -167,14 +58,9 @@ function init() {
     toastTimer = setTimeout(() => { ui.toast.hidden = true; }, ms);
   };
   const setStatus = (text, cls = '') => {
+    if (ui.status.textContent === text && ui.status.className === `status ${cls}`.trim()) return;
     ui.status.textContent = text;
     ui.status.className = `status ${cls}`.trim();
-  };
-
-  const updateReadout = () => {
-    $('ro-eirp').textContent = `${ap.eirp.toFixed(0)} dBm`;
-    $('ro-data').textContent = formatDistance(distanceForRssi(ap.eirp, -67));
-    $('ro-edge').textContent = formatDistance(distanceForRssi(ap.eirp, CELL_EDGE_DBM));
   };
 
   const readHeightM = () => parseFloat(ui.height.value) * FT_TO_M;
@@ -184,36 +70,22 @@ function init() {
     $('downtilt-out').textContent = `${ui.downtilt.value}°`;
     $('height-out').textContent = `${ft % 1 ? ft.toFixed(1) : ft} ft (${(ft * FT_TO_M).toFixed(1)} m)`;
     $('txpower-out').textContent = `${ui.txpower.value} dBm`;
-    updateReadout();
+    $('ro-eirp').textContent = `${ap.eirp.toFixed(0)} dBm`;
+    $('ro-data').textContent = formatDistance(distanceForRssi(ap.eirp, -67));
+    $('ro-edge').textContent = formatDistance(distanceForRssi(ap.eirp, CELL_EDGE_DBM));
   };
 
   // Legend bar
   $('legend-bar').style.background = legendGradientCss();
-  const labels = $('legend-labels');
   for (const { text, leftPct } of LEGEND_LABELS) {
     const span = document.createElement('span');
     span.textContent = text;
     span.style.left = `${leftPct}%`;
-    labels.appendChild(span);
+    $('legend-labels').appendChild(span);
   }
 
-  // Controls
-  ui.downtilt.addEventListener('input', () => {
-    ap.setDowntiltDeg(parseFloat(ui.downtilt.value));
-    syncLabels();
-  });
-  ui.height.addEventListener('input', () => {
-    ap.setHeightM(readHeightM());
-    syncLabels();
-  });
-  ui.txpower.addEventListener('input', () => {
-    ap.setTxPower(parseFloat(ui.txpower.value));
-    syncLabels();
-  });
-
+  // ---- AP model / antenna controls ----
   const antennaButtons = [...document.querySelectorAll('[data-antenna]')];
-  const modelSelect = $('ap-model');
-
   const highlightPattern = (type) => {
     for (const b of antennaButtons) {
       const active = b.dataset.antenna === type;
@@ -231,30 +103,48 @@ function init() {
       opt.textContent = m.name;
       og.appendChild(opt);
     }
-    modelSelect.appendChild(og);
+    ui.modelSelect.appendChild(og);
   }
 
-  modelSelect.addEventListener('change', () => {
-    const model = getApModel(modelSelect.value);
-    if (!model) return; // "Generic" keeps the current pattern
-    ap.setAntenna(model.pattern, model.gainDbi, model.beamwidthDeg);
+  const applyModel = (model) => {
+    ap.setAntenna(model.pattern, model.gainDbi, model.beamwidthDeg, model.name);
     ap.setTxPower(model.txDbm);
     ui.txpower.value = model.txDbm;
     highlightPattern(model.pattern);
     $('model-info').textContent =
       `${model.gainDbi} dBi · ${model.pattern === 'omni' ? 'omnidirectional' : `${model.beamwidthDeg}° beamwidth`} · ${model.txDbm} dBm TX (approx. 5 GHz)`;
     syncLabels();
+  };
+
+  ui.modelSelect.addEventListener('change', () => {
+    const model = getApModel(ui.modelSelect.value);
+    if (model) applyModel(model); // "Generic" keeps the current pattern
   });
 
   for (const btn of antennaButtons) {
     btn.addEventListener('click', () => {
       ap.setAntenna(btn.dataset.antenna);
-      modelSelect.value = '';
+      ui.modelSelect.value = '';
       $('model-info').textContent = 'Generic pattern';
       highlightPattern(btn.dataset.antenna);
       syncLabels();
     });
   }
+
+  ui.downtilt.addEventListener('input', () => {
+    ap.setDowntiltDeg(parseFloat(ui.downtilt.value));
+    syncLabels();
+  });
+  ui.height.addEventListener('input', () => {
+    const m = readHeightM();
+    ap.setHeightM(m);
+    scenarios.setHeight(m);
+    syncLabels();
+  });
+  ui.txpower.addEventListener('input', () => {
+    ap.setTxPower(parseFloat(ui.txpower.value));
+    syncLabels();
+  });
 
   const panel = $('panel');
   const toggle = $('panel-toggle');
@@ -269,25 +159,67 @@ function init() {
     el.addEventListener('beforexrselect', (e) => e.preventDefault());
   }
 
-  // ---- Placement ----
-  // Desktop preview of a wall mount: open with ?mount=wall (a wall slab is drawn at z = 0).
-  const previewWall = new URLSearchParams(location.search).get('mount') === 'wall';
-  const wallSlab = new THREE.Mesh(
-    new THREE.PlaneGeometry(20, 8).translate(0, 4, 0),
-    new THREE.MeshBasicMaterial({ color: 0x1d3550, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
-  );
-  wallSlab.position.z = -0.01;
-  wallSlab.visible = previewWall;
-  scene.add(wallSlab);
+  // ---- Scenarios (desktop / non-AR preview) ----
+  for (const s of SCENARIOS) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    ui.scenarioSelect.appendChild(opt);
+  }
 
-  const placePreview = () => {
-    if (previewWall) {
-      ap.placeAt(new THREE.Vector3(0, ap.heightM, 0), new THREE.Vector3(0, 0, 1), 'wall');
-    } else {
-      ap.placeAt(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1), 'floor');
-    }
-    controls.target.set(0, ap.heightM * 0.6, 0);
+  const setCamera = ({ pos, target }) => {
+    camera.position.set(...pos);
+    controls.target.set(...target);
     controls.update();
+  };
+
+  const loadScenario = (id) => {
+    const spec = scenarios.load(id);
+    previewGrid.visible = !spec;
+    $('scenario-info').textContent = spec ? spec.blurb : 'Open space with a reference grid.';
+
+    if (!spec) {
+      ap.placeAt(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1), 'floor');
+      setCamera(DEFAULT_CAMERA);
+      return;
+    }
+
+    const cfg = spec.ap;
+    ui.height.value = cfg.heightFt;
+    ui.downtilt.value = cfg.tiltDeg;
+    ui.modelSelect.value = cfg.model;
+    ap.setHeightM(readHeightM());
+    ap.setDowntiltDeg(cfg.tiltDeg);
+    const model = getApModel(cfg.model);
+    if (model) applyModel(model);
+
+    const heightM = readHeightM();
+    scenarios.setHeight(heightM);
+    ap.placeAt(new THREE.Vector3(cfg.x, heightM, cfg.z), new THREE.Vector3(...cfg.facing), cfg.mount, 0);
+    setCamera(spec.camera);
+    syncLabels();
+  };
+
+  ui.scenarioSelect.addEventListener('change', () => loadScenario(ui.scenarioSelect.value));
+
+  // ---- AR ----
+  const arStatus = { lastText: '', lastDiag: 0 };
+
+  const placeAheadOfUser = () => {
+    const cam = renderer.xr.getCamera();
+    const origin = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+    const dir = new THREE.Vector3();
+    cam.getWorldDirection(dir);
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+    dir.normalize();
+
+    // Assume a local-floor reference space (floor at y = 0) unless the camera height says otherwise.
+    const floorY = origin.y > 0.7 && origin.y < 2.3 ? 0 : origin.y - 1.4;
+    const position = new THREE.Vector3(origin.x + dir.x * 2.5, floorY, origin.z + dir.z * 2.5);
+    ap.placeAt(position, dir.clone().negate(), 'floor');
+    setStatus('AP placed 2.5 m ahead (manual)', 'ok');
+    showToast('AP placed ahead of you at the mounting height. Tap a real surface any time to re-anchor it.');
   };
 
   const ar = new ARController({
@@ -309,44 +241,48 @@ function init() {
       setStatus(`AP placed on ${surface}`, 'ok');
       showToast(
         surface === 'wall'
-          ? 'AP mounted on wall. Set Downtilt to angle it down; the pattern is cut at the wall.'
+          ? 'AP mounted on the wall. Use Downtilt to angle it; the pattern is cut at the wall.'
           : surface === 'floor'
-            ? 'Floor set. AP is raised to the mounting height. Tap again to move.'
-            : 'AP anchored to ceiling. Adjust height, tilt and power below.'
+            ? 'Floor tapped. The AP floats at the mounting height above that spot.'
+            : 'AP anchored to the ceiling. Adjust height, tilt and power below.'
       );
     },
     onSessionStart: () => {
+      document.body.classList.add('in-ar');
+      scenarios.setActive(false);
       previewGrid.visible = false;
-      wallSlab.visible = false;
       controls.enabled = false;
-      ap.root.visible = false;
-      setStatus('Scan, then tap a ceiling, wall or floor', 'warn');
-      showToast('Move your phone slowly to detect surfaces, then tap to anchor the AP.', 5000);
+      ap.hide();
+      setStatus('Scanning… move the phone slowly', 'warn');
+      showToast('Point at a wall, ceiling or floor. When the reticle appears, tap to place the AP.', 5000);
     },
     onSessionEnd: () => {
-      previewGrid.visible = true;
-      wallSlab.visible = previewWall;
+      document.body.classList.remove('in-ar');
+      scenarios.setActive(true);
+      previewGrid.visible = !scenarios.spec;
       controls.enabled = true;
-      camera.position.set(9, 5, 11);
-      placePreview();
+      ui.diag.textContent = '';
+      loadScenario(ui.scenarioSelect.value);
       setStatus('Preview mode', '');
       onResize();
     },
     onMessage: (msg) => showToast(msg, 4000),
   });
 
+  $('place-ahead-btn').addEventListener('click', placeAheadOfUser);
+
   $('scale-btn').addEventListener('click', () => {
     ap.setCompact(!ap.compact);
-    $('scale-btn').textContent = ap.compact ? 'Size: Compact (12 m)' : 'Size: True scale';
+    $('scale-btn').textContent = ap.compact ? `Size: Compact (${COMPACT_MAX_RADIUS_M} m)` : 'Size: True scale';
     showToast(ap.compact ? 'Bubble compressed to fit a room. Readouts show true ranges.' : 'Bubble drawn at true model range.');
   });
 
   $('reset-btn').addEventListener('click', () => {
     if (ar.isPresenting) {
-      ap.root.visible = false;
-      setStatus('Tap a surface to place the AP', 'warn');
+      ap.hide();
+      setStatus('Scanning… tap a surface to place the AP', 'warn');
     } else {
-      placePreview();
+      loadScenario(ui.scenarioSelect.value);
     }
   });
 
@@ -360,7 +296,10 @@ function init() {
   // ---- Boot ----
   ap.setHeightM(readHeightM());
   syncLabels();
-  placePreview();
+  const requested = new URLSearchParams(location.search).get('scenario');
+  const startId = SCENARIOS.some((s) => s.id === requested) ? requested : SCENARIOS[0].id;
+  ui.scenarioSelect.value = startId; // default to a scenario for a more immersive preview
+  loadScenario(startId);
 
   ARController.isSupported().then((supported) => {
     if (supported) {
@@ -374,9 +313,24 @@ function init() {
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop((_, frame) => {
+    const now = clock.getElapsedTime();
     ar.update(frame);
-    ap.update(clock.getElapsedTime());
-    if (!ar.isPresenting) controls.update();
+    ap.update(now);
+
+    if (ar.isPresenting) {
+      if (!ap.placed) {
+        const hint = ar.reticleSurface
+          ? `${ar.reticleSurface[0].toUpperCase()}${ar.reticleSurface.slice(1)} detected · tap to place AP`
+          : 'Scanning… move the phone slowly';
+        setStatus(hint, ar.reticleSurface ? 'ok' : 'warn');
+      }
+      if (now - arStatus.lastDiag > 0.5) {
+        arStatus.lastDiag = now;
+        ui.diag.textContent = ar.diagnostics();
+      }
+    } else {
+      controls.update();
+    }
     renderer.render(scene, camera);
   });
 }
